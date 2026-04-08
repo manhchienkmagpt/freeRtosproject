@@ -1,175 +1,171 @@
 /*
- * Database Connection Module for SQLite3
- * Initializes database and creates tables if needed
+ * Database Adapter - Universal interface for MySQL and SQLite
+ * Provides callback-based interface for routes
  */
 
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const fs = require('fs');
+require('dotenv').config();
+const dbType = process.env.DATABASE_TYPE || 'mysql';
 
-const DB_PATH = path.join(__dirname, 'parking_system.db');
+let db;
 
-// Create database connection
-const db = new sqlite3.Database(DB_PATH, (err) => {
-    if (err) {
-        console.error('[DATABASE] Connection error:', err.message);
-        process.exit(1);
-    } else {
-        console.log('[DATABASE] Connected to SQLite database');
-        initializeDatabase();
-    }
-});
-
-// Enable foreign keys
-db.run('PRAGMA foreign_keys = ON');
-
-// =====================================================
-// DATABASE INITIALIZATION
-// =====================================================
-
-function initializeDatabase() {
-    // Check if tables exist, if not create them
+if (dbType === 'mysql') {
+    // =====================================================
+    // MYSQL ADAPTER
+    // =====================================================
+    const mysql = require('mysql2/promise');
+    const fs = require('fs');
+    const path = require('path');
     
-    // Users table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            rfid_uid TEXT UNIQUE NOT NULL,
-            full_name TEXT NOT NULL,
-            phone_number TEXT,
-            email TEXT,
-            account_balance REAL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) console.error('[DB] Users table error:', err);
-        else console.log('[DB] Users table ready');
+    const pool = mysql.createPool({
+        host: process.env.MYSQL_HOST || 'localhost',
+        port: parseInt(process.env.MYSQL_PORT) || 3306,
+        user: process.env.MYSQL_USER || 'root',
+        password: process.env.MYSQL_PASSWORD || 'chien123',
+        database: process.env.MYSQL_DATABASE || 'parking_system',
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
     });
-    
-    // RFID Cards table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS rfid_cards (
-            card_id TEXT PRIMARY KEY,
-            rfid_uid TEXT UNIQUE NOT NULL,
-            user_id TEXT,
-            card_status TEXT DEFAULT 'active',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
-        )
-    `, (err) => {
-        if (err) console.error('[DB] RFID Cards table error:', err);
-        else console.log('[DB] RFID Cards table ready');
-    });
-    
-    // Vehicles log table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS vehicles_log (
-            vehicle_id TEXT PRIMARY KEY,
-            rfid_uid TEXT NOT NULL,
-            user_id TEXT,
-            entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-            exit_time DATETIME,
-            entry_gate TEXT DEFAULT 'main',
-            exit_gate TEXT,
-            duration_minutes INTEGER,
-            payment_amount REAL,
-            payment_status TEXT DEFAULT 'pending',
-            payment_method TEXT,
-            gate_status TEXT DEFAULT 'completed',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(user_id)
-        )
-    `, (err) => {
-        if (err) console.error('[DB] Vehicles log table error:', err);
-        else console.log('[DB] Vehicles log table ready');
-    });
-    
-    // Parking slots table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS parking_slots (
-            slot_id INTEGER PRIMARY KEY,
-            slot_name TEXT UNIQUE NOT NULL,
-            is_occupied INTEGER DEFAULT 0,
-            current_vehicle_id TEXT,
-            entry_time DATETIME,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(current_vehicle_id) REFERENCES vehicles_log(vehicle_id)
-        )
-    `, (err) => {
-        if (err) console.error('[DB] Parking slots table error:', err);
-        else console.log('[DB] Parking slots table ready');
-        
-        // Insert initial parking slots if they don't exist
-        for (let i = 1; i <= 6; i++) {
-            db.run(
-                'INSERT OR IGNORE INTO parking_slots (slot_id, slot_name, is_occupied) VALUES (?, ?, ?)',
-                [i, `Slot-${i}`, 0]
+
+    db = {
+        pool: pool,
+
+        // Callback-based execute (for INSERT/UPDATE/DELETE)
+        run: (sql, params = [], callback) => {
+            if (typeof params === 'function') {
+                callback = params;
+                params = [];
+            }
+            
+            pool.getConnection().then(conn => {
+                conn.execute(sql, params)
+                    .then((result) => {
+                        conn.release();
+                        if (callback) {
+                            callback.call({ id: result[0].insertId }, null);
+                        }
+                    })
+                    .catch((err) => {
+                        conn.release();
+                        if (callback) callback.call({ id: null }, err);
+                    });
+            }).catch((err) => {
+                if (callback) callback(err);
+            });
+        },
+
+        // Callback-based get (single row)
+        get: (sql, params = [], callback) => {
+            if (typeof params === 'function') {
+                callback = params;
+                params = [];
+            }
+            
+            pool.getConnection().then(conn => {
+                conn.execute(sql, params)
+                    .then((result) => {
+                        conn.release();
+                        const [rows] = result;
+                        if (callback) callback(null, rows.length > 0 ? rows[0] : null);
+                    })
+                    .catch((err) => {
+                        conn.release();
+                        if (callback) callback(err);
+                    });
+            }).catch((err) => {
+                if (callback) callback(err);
+            });
+        },
+
+        // Callback-based all (multiple rows)
+        all: (sql, params = [], callback) => {
+            if (typeof params === 'function') {
+                callback = params;
+                params = [];
+            }
+            
+            pool.getConnection().then(conn => {
+                conn.execute(sql, params)
+                    .then((result) => {
+                        conn.release();
+                        const [rows] = result;
+                        if (callback) callback(null, rows);
+                    })
+                    .catch((err) => {
+                        conn.release();
+                        if (callback) callback(err);
+                    });
+            }).catch((err) => {
+                if (callback) callback(err);
+            });
+        },
+
+        // Close pool
+        close: () => {
+            return pool.end();
+        }
+    };
+
+    // Initialize database on startup
+    (async () => {
+        let connection;
+        try {
+            connection = await pool.getConnection();
+            console.log('[DATABASE] ✓ Connected to MySQL successfully');
+            
+            // Read and execute init_database.sql
+            const sqlScript = fs.readFileSync(
+                path.join(__dirname, 'init_database.sql'),
+                'utf8'
             );
+            
+            // Split by semicolon and execute each statement
+            const statements = sqlScript
+                .split(';')
+                .map(stmt => stmt.trim())
+                .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+            
+            for (const statement of statements) {
+                try {
+                    await connection.execute(statement);
+                } catch (err) {
+                    // Ignore errors about existing databases/tables
+                    if (!err.message.includes('already exists') && 
+                        !err.message.includes('ER_DB_CREATE_EXISTS') &&
+                        !err.message.includes('Duplicate')) {
+                        // console.error('[DB] Error:', err.message);
+                    }
+                }
+            }
+            
+            console.log('[DATABASE] ✓ All tables initialized!');
+            connection.release();
+            
+        } catch (err) {
+            console.error('[DATABASE] Initialization error:', err.message);
+            if (connection) connection.release();
         }
-    });
+    })();
+
+} else {
+    // =====================================================
+    // SQLITE ADAPTER (Legacy)
+    // =====================================================
+    const sqlite3 = require('sqlite3').verbose();
+    const path = require('path');
     
-    // Alarm logs table
-    db.run(`
-        CREATE TABLE IF NOT EXISTS alarm_logs (
-            alarm_id TEXT PRIMARY KEY,
-            alarm_type TEXT NOT NULL,
-            sensor_value INTEGER,
-            alarm_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-            resolved INTEGER DEFAULT 0,
-            resolved_time DATETIME,
-            notes TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) console.error('[DB] Alarm logs table error:', err);
-        else console.log('[DB] Alarm logs table ready');
-    });
+    const DB_PATH = path.join(__dirname, 'parking_system.db');
     
-    console.log('[DATABASE] Initialization completed');
-}
-
-// =====================================================
-// DATABASE HELPER FUNCTIONS
-// =====================================================
-
-// Execute query with parameters
-db.run = function(sql, params = [], callback) {
-    return sqlite3.Database.prototype.run.call(this, sql, params, function(err) {
-        if (callback) callback.call(this, err);
-    });
-};
-
-// Get single row
-db.get = function(sql, params = [], callback) {
-    if (typeof params === 'function') {
-        callback = params;
-        params = [];
-    }
-    return sqlite3.Database.prototype.get.call(this, sql, params, callback);
-};
-
-// Get multiple rows
-db.all = function(sql, params = [], callback) {
-    if (typeof params === 'function') {
-        callback = params;
-        params = [];
-    }
-    return sqlite3.Database.prototype.all.call(this, sql, params, callback);
-};
-
-// =====================================================
-// DATABASE CLOSE
-// =====================================================
-
-process.on('SIGINT', () => {
-    db.close((err) => {
+    db = new sqlite3.Database(DB_PATH, (err) => {
         if (err) {
-            console.error('[DATABASE] Close error:', err.message);
+            console.error('[DATABASE] Connection error:', err.message);
+            process.exit(1);
         } else {
-            console.log('[DATABASE] Connection closed');
+            console.log('[DATABASE] Connected to SQLite database');
         }
     });
-});
+    
+    db.run('PRAGMA foreign_keys = ON');
+}
 
 module.exports = db;

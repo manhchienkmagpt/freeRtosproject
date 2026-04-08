@@ -98,6 +98,8 @@ uint8_t servo_moving = 0;
 // Timing variables
 unsigned long last_sensor_read = 0;
 unsigned long last_lcd_update = 0;
+unsigned long last_slot_sync = 0; // Thêm biến track việc sync slot
+uint8_t last_parking_slots[6] = {0, 0, 0, 0, 0, 0}; // Lưu trạng thái cũ để phát hiện thay đổi
 unsigned long last_lcd_page_flip = 0;
 uint8_t lcd_page = 0;
 unsigned long last_heartbeat = 0;
@@ -227,6 +229,12 @@ void loop() {
         last_lcd_update = now;
         updateLCDDisplay();
     }
+
+    // Sync parking slots state with ESP32 (every 2 seconds or on change)
+    if (now - last_slot_sync > 2000) {
+        last_slot_sync = now;
+        syncParkingSlots();
+    }
     
     // Check Bluetooth every 10ms (polling)
     handleBluetoothInput();
@@ -316,6 +324,9 @@ void checkAlarms() {
             if (smoke_detected) Serial.println("[ALARM] Smoke detected!");
             if (flame_detected) Serial.println("[ALARM] Flame detected!");
             
+            // Gửi log cảnh báo cháy nổ lên ESP32
+            sendAlarmToESP32(smoke_detected ? "SMOKE" : "FLAME", smoke_value);
+
             BLUETOOTH_SERIAL.println("\n[ALARM] SYSTEM ALERT!");
             BLUETOOTH_SERIAL.println("Smoke or Flame detected!");
         }
@@ -544,14 +555,45 @@ void displayStatus() {
 }
 
 void sendToESP32(const char* gate, const char* action, uint8_t angle) {
-    unsigned long timestamp = millis() - system_start_time;
+    unsigned long timestamp = millis();
     char message[64];
     
-    snprintf(message, sizeof(message), "$%s|%s|%d|%lu\n", gate, action, angle, timestamp);
+    // Format: $SERVO|GATE_IN|OPEN|90|timestamp
+    snprintf(message, sizeof(message), "$SERVO|%s|%s|%d|%lu\n", gate, action, angle, timestamp);
     ESP32_SERIAL.print(message);
     
-    Serial.print("[ESP32] Sent: ");
+    Serial.print("[ESP32-SERVO] Sent: ");
     Serial.print(message);
+}
+
+void sendAlarmToESP32(const char* type, int value) {
+    char message[64];
+    // Format: $ALARM|type|value|timestamp
+    snprintf(message, sizeof(message), "$ALARM|%s|%d|%lu\n", type, value, millis());
+    ESP32_SERIAL.print(message);
+    Serial.print("[ESP32-ALARM] Sent: ");
+    Serial.print(message);
+}
+
+void syncParkingSlots() {
+    bool changed = false;
+    for (int i = 0; i < 6; i++) {
+        if (parking_slots[i] != last_parking_slots[i]) {
+            changed = true;
+            last_parking_slots[i] = parking_slots[i];
+        }
+    }
+
+    if (changed) {
+        char message[128];
+        // Format: $SLOTS|s1,s2,s3,s4,s5,s6|timestamp
+        snprintf(message, sizeof(message), "$SLOTS|%d,%d,%d,%d,%d,%d|%lu\n", 
+            parking_slots[0], parking_slots[1], parking_slots[2], 
+            parking_slots[3], parking_slots[4], parking_slots[5], millis());
+        ESP32_SERIAL.print(message);
+        Serial.print("[ESP32-SLOTS] Sync: ");
+        Serial.print(message);
+    }
 }
 
 void scanI2CAddress() {

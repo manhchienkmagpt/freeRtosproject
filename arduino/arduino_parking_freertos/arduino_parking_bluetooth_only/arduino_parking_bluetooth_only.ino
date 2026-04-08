@@ -1,49 +1,53 @@
 /*
  * =====================================================
- * SMART PARKING SYSTEM - ARDUINO MEGA WITH FreeRTOS (SIMPLIFIED)
+ * SMART PARKING SYSTEM - ARDUINO MEGA WITH FreeRTOS
  * =====================================================
  * 
- * Bluetooh-Only Servo Control Version
+ * Complete Bluetooth-Controlled Parking System with FreeRTOS
  * 
  * System Architecture:
  * - Main Controller: Arduino Mega (2560)
- * - OS: FreeRTOS
+ * - OS: FreeRTOS (Non-blocking, multi-tasking)
  * - Wireless Control: Bluetooth (HC-05)
- * - Gate Control: 2 Servo Motors (PWM)
+ * - Gate Control: 2 Servo Motors (PWM pins 2,3)
  * - Gateway: ESP32 (for server notification)
+ * - Parking Detection: 6 IR sensors
+ * - Alarm System: Smoke/Flame detection with buzzer
+ * - Display: LCD I2C 16x2 with paging
  * 
- * REMOVED COMPONENTS:
- * - RFID readers (RC522 modules)
- * - RFID authentication tasks
+ * Features:
+ * ✓ Servo Gate Control (Open/Close)
+ * ✓ Bluetooth Command Processing
+ * ✓ Parking Slot Status Monitoring (6 slots)
+ * ✓ Buzzer Control (On/Off/Alert)
+ * ✓ Smoke/Flame Detection & Alert
+ * ✓ LCD Display with Paging
+ * ✓ ESP32 Gateway Communication
+ * ✓ Real-time Heartbeat Monitoring
  * 
- * KEPT COMPONENTS:
- * - Servo Motors: 2 (Gate IN, Gate OUT) - PWM pins 2,3
- * - Bluetooth: HC-05 (Serial3: pins 14,15)
- * - ESP32: Gateway via UART1 (pins 18,19)
- * - IR Sensors: 6 parking slots (A0-A5) - unused but kept
- * - LCD: I2C 16x2 (pins 20,21) - unused but kept
- * - Smoke Sensor: MQ2 (A8) - unused but kept
- * - Flame Sensor: Digital (pin 22) - unused but kept
- * - Buttons: 3 buttons - unused but kept
- * - Buzzer: Digital PWM - unused but kept
- * 
- * Task Schedule:
- * - TaskBluetooth: Priority 4 (Bluetooth command processing)
+ * FreeRTOS Task Schedule:
+ * - TaskBluetooth: Priority 4 (Bluetooth input processing)
  * - TaskGateControl: Priority 3 (Servo motor control)
- * - TaskCommunicationESP32: Priority 2 (Send events to ESP32)
- * - TaskAlarm: Priority 1 (Smoke/Flame detection - future)
+ * - TaskDisplayLCD: Priority 3 (LCD updates with paging)
+ * - TaskCommunicationESP32: Priority 2 (ESP32 messaging)
+ * - TaskAlarm: Priority 2 (Smoke/Flame detection & buzzer)
+ * - TaskParkingSensor: Priority 1 (IR sensor reading)
+ * - TaskSlotSync: Priority 1 (Parking slot sync to ESP32)
+ * - TaskHeartbeat: Priority 1 (Status monitoring)
  * 
- * Command Format (Bluetooth):
- * - "1" = Open GATE_IN servo
- * - "2" = Close GATE_IN servo
- * - "3" = Open GATE_OUT servo
- * - "4" = Close GATE_OUT servo
- * - "S" = Request system status
+ * Bluetooth Commands:
+ * - "1" = Open GATE_IN
+ * - "2" = Close GATE_IN
+ * - "3" = Open GATE_OUT
+ * - "4" = Close GATE_OUT
+ * - "B" = Toggle Buzzer (on/off/auto)
+ * - "S" = System Status
  * - "?" = Help menu
  * 
- * ESP32 Message Format (UART1 at 19200 baud):
- * - "${gate_type}|{action}|{angle}|{timestamp}"
- * - Example: "GATE_IN|OPEN|90|1234567890"
+ * ESP32 Message Formats:
+ * - Servo: "$SERVO|{gate}|{action}|{angle}|{timestamp}"
+ * - Slots: "$SLOTS|s1,s2,s3,s4,s5,s6|{timestamp}"
+ * - Alarm: "$ALARM|{type}|{value}|{timestamp}"
  */
 
 #include <Arduino.h>
@@ -104,6 +108,13 @@
 #define GATE_IN 1
 #define GATE_OUT 2
 
+// Alarm thresholds
+#define SMOKE_THRESHOLD 400      // MQ2 smoke sensor threshold
+#define FLAME_DETECTED 0         // Flame sensor: LOW = detected
+
+// Alarm beep pattern
+#define ALARM_BEEP_INTERVAL 200  // Beep every 200ms
+
 // =====================================================
 // DATA STRUCTURES
 // =====================================================
@@ -134,6 +145,7 @@ uint8_t servo_out_position = 0;  // Current position (0=closed, 90=open)
 
 // Parking slot states (0=empty, 1=filled)
 uint8_t parking_slots[6] = {0, 0, 0, 0, 0, 0};
+uint8_t last_parking_slots[6] = {0, 0, 0, 0, 0, 0};  // Track changes for sync
 
 // LCD display screen rotation
 uint8_t display_screen = 0;  // 0=gates, 1=parking slots 1-3, 2=parking slots 4-6
@@ -151,6 +163,17 @@ unsigned long system_start_time = 0;
 uint32_t total_servo_operations = 0;
 bool esp32_connected = false;
 
+// Alarm system (new)
+uint8_t alarm_active = 0;
+unsigned long alarm_start = 0;
+int last_smoke_value = 0;
+int last_flame_value = 0;
+uint8_t smoke_detected = 0;
+uint8_t flame_detected = 0;
+
+// Buzzer control (new)
+uint8_t buzzer_enabled = 0;  // 0=off, 1=on, 2=auto (alarm only)
+
 // =====================================================
 // PROTOTYPES
 // =====================================================
@@ -162,6 +185,8 @@ void TaskAlarm(void *pvParameters);
 void TaskDisplayLCD(void *pvParameters);
 void TaskParkingSensor(void *pvParameters);
 void TaskHeartbeat(void *pvParameters);
+void TaskSlotSync(void *pvParameters);
+void TaskBuzzer(void *pvParameters);
 
 void initializeServos();
 void initializeBluetooth();
@@ -172,6 +197,8 @@ void processBluetoothCommand(char cmd);
 void sendServoEvent(ServoEvent event);
 void displayStatus();
 void displayLCDStatus();
+void sendAlarmToESP32(const char* type, int value);
+void syncParkingSlotsWithESP32();
 
 // =====================================================
 // SETUP
@@ -249,8 +276,14 @@ void setup() {
     xTaskCreate(TaskCommunicationESP32, "ESP32", 256, NULL, 2, NULL);
     Serial.println("[SETUP] TaskCommunicationESP32 created");
     
-    xTaskCreate(TaskAlarm, "ALARM", 128, NULL, 1, NULL);
+    xTaskCreate(TaskAlarm, "ALARM", 128, NULL, 2, NULL);
     Serial.println("[SETUP] TaskAlarm created");
+    
+    xTaskCreate(TaskSlotSync, "SYNC", 128, NULL, 1, NULL);
+    Serial.println("[SETUP] TaskSlotSync created");
+    
+    xTaskCreate(TaskBuzzer, "BUZZ", 128, NULL, 2, NULL);
+    Serial.println("[SETUP] TaskBuzzer created");
     
     xTaskCreate(TaskHeartbeat, "HB", 128, NULL, 1, NULL);
     Serial.println("[SETUP] TaskHeartbeat created");
@@ -471,14 +504,63 @@ void TaskCommunicationESP32(void *pvParameters) {
 }
 
 // ========== TaskAlarm ==========
+// Detects smoke and flame, triggers alarm and buzzer
 void TaskAlarm(void *pvParameters) {
+    unsigned long last_log = 0;
+    
+    Serial.println("[ALARM] TaskAlarm started!");
+    
     for (;;) {
-        // Read smoke and flame sensors (kept for future use)
-        int smoke_value = analogRead(SMOKE_SENSOR);
-        int flame_state = digitalRead(FLAME_SENSOR);
+        // Read smoke sensor (analog)
+        last_smoke_value = analogRead(SMOKE_SENSOR);
+        smoke_detected = (last_smoke_value > SMOKE_THRESHOLD) ? 1 : 0;
         
-        // Not used in current version
-        vTaskDelay(pdMS_TO_TICKS(5000));  // Check every 5 seconds
+        // Read flame sensor (digital)
+        last_flame_value = digitalRead(FLAME_SENSOR);
+        flame_detected = (last_flame_value == FLAME_DETECTED) ? 1 : 0;
+        
+        // Check if alarm should be triggered
+        if (smoke_detected || flame_detected) {
+            // Alarm triggered
+            if (alarm_active == 0) {
+                alarm_active = 1;
+                alarm_start = millis();
+                
+                Serial.println("\n[ALARM] ALARM TRIGGERED!");
+                if (smoke_detected) Serial.println("[ALARM] Smoke detected!");
+                if (flame_detected) Serial.println("[ALARM] Flame detected!");
+                
+                BLUETOOTH_SERIAL.println("\n[ALARM] SYSTEM ALERT!");
+                if (smoke_detected) BLUETOOTH_SERIAL.println("Smoke detected!");
+                if (flame_detected) BLUETOOTH_SERIAL.println("Flame detected!");
+                
+                // Send alarm to ESP32
+                sendAlarmToESP32(smoke_detected ? "SMOKE" : "FLAME", 
+                                smoke_detected ? last_smoke_value : 1);
+            }
+        } else {
+            // Alarm cleared
+            if (alarm_active == 1) {
+                alarm_active = 0;
+                digitalWrite(BUZZER_PIN, LOW);
+                Serial.println("[ALARM] All sensors normal");
+                BLUETOOTH_SERIAL.println("[OK] Alarm cleared\n");
+            }
+        }
+        
+        // Log every 10 seconds
+        if (millis() - last_log > 10000) {
+            last_log = millis();
+            Serial.print("[ALARM] Status - Smoke: ");
+            Serial.print(last_smoke_value);
+            Serial.print(" | Flame: ");
+            Serial.print(last_flame_value);
+            Serial.print(" | Active: ");
+            Serial.println(alarm_active ? "YES" : "NO");
+        }
+        
+        // Check every 100ms
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -552,8 +634,9 @@ void TaskParkingSensor(void *pvParameters) {
 }
 
 // ========== TaskDisplayLCD ==========
-// INDEPENDENT TASK - ONLY READS parking_slots[], NO DEPENDENCIES
+// Display with paging: 0=gates, 1=parking slots 1-3, 2=parking slots 4-6
 void TaskDisplayLCD(void *pvParameters) {
+    unsigned long last_page_flip = 0;
     unsigned long last_log = 0;
     
     Serial.println("[LCD] TaskDisplayLCD started!");
@@ -562,42 +645,74 @@ void TaskDisplayLCD(void *pvParameters) {
     lcd.clear();
     
     for (;;) {
-        // Row 0: Status line
-        lcd.setCursor(0, 0);
-        
-        // Column 0-3: Slot 1-2
-        lcd.print("1:");
-        lcd.print(parking_slots[0] ? "F" : "E");
-        lcd.print(" 2:");
-        lcd.print(parking_slots[1] ? "F" : "E");
-        
-        // Column 5-8: Slot 3-4
-        lcd.print(" 3:");
-        lcd.print(parking_slots[2] ? "F" : "E");
-        
-        // Row 1: Status line
-        lcd.setCursor(0, 1);
-        
-        // Column 0-3: Slot 5
-        lcd.print(" 4:");
-        lcd.print(parking_slots[3] ? "F" : "E");
-        lcd.print(" 5:");
-        lcd.print(parking_slots[4] ? "F" : "E");
-        lcd.print(" 6:");
-        lcd.print(parking_slots[5] ? "F" : "E");
-        
-        // Log every 10 seconds
-        if (millis() - last_log > 10000) {
-            last_log = millis();
-            Serial.print("[LCD] Display updated: ");
-            for (int i = 0; i < 6; i++) {
-                Serial.print(parking_slots[i] ? "F" : "E");
-                Serial.print(" ");
-            }
-            Serial.println();
+        // Flip page every 3 seconds
+        if (millis() - last_page_flip > 3000) {
+            last_page_flip = millis();
+            display_screen = (display_screen + 1) % 3;
+            lcd.clear();
         }
         
-        // Update every 100ms - very fast refresh
+        // Update display based on current page
+        if (display_screen == 0) {
+            // Page 0: Gate positions
+            lcd.setCursor(0, 0);
+            lcd.print("IN:");
+            lcd.print(servo_in_position);
+            lcd.print("o OUT:");
+            lcd.print(servo_out_position);
+            lcd.print("o");
+            
+            lcd.setCursor(0, 1);
+            if (alarm_active) {
+                lcd.print("ALARM!!!");
+            } else {
+                lcd.print("(Page 1/3)");
+            }
+        } 
+        else if (display_screen == 1) {
+            // Page 1: Slots 1-3
+            lcd.setCursor(0, 0);
+            lcd.print("S1:");
+            lcd.print(parking_slots[0] ? "FILL " : "EMPTY");
+            lcd.print("S2:");
+            lcd.print(parking_slots[1] ? "FILL" : "EMPT");
+            
+            lcd.setCursor(0, 1);
+            lcd.print("S3:");
+            lcd.print(parking_slots[2] ? "FILL " : "EMPTY");
+            if (alarm_active) {
+                lcd.print(" !!!");
+            } else {
+                lcd.print(" (2/3)");
+            }
+        } 
+        else if (display_screen == 2) {
+            // Page 2: Slots 4-6
+            lcd.setCursor(0, 0);
+            lcd.print("S4:");
+            lcd.print(parking_slots[3] ? "FILL " : "EMPTY");
+            lcd.print("S5:");
+            lcd.print(parking_slots[4] ? "FILL" : "EMPT");
+            
+            lcd.setCursor(0, 1);
+            lcd.print("S6:");
+            lcd.print(parking_slots[5] ? "FILL " : "EMPTY");
+            if (alarm_active) {
+                lcd.print(" !!!");
+            } else {
+                lcd.print(" (3/3)");
+            }
+        }
+        
+        // Log every 15 seconds
+        if (millis() - last_log > 15000) {
+            last_log = millis();
+            Serial.print("[LCD] Page ");
+            Serial.print(display_screen);
+            Serial.println(" updated");
+        }
+        
+        // Update every 100ms
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -653,6 +768,23 @@ void processBluetoothCommand(char cmd) {
             xQueueSend(servoEventQueue, &event, 0);
             break;
             
+        case 'B':
+            // Toggle Buzzer
+            buzzer_enabled = !buzzer_enabled;
+            if (buzzer_enabled) {
+                // Beep to confirm ON
+                digitalWrite(BUZZER_PIN, HIGH);
+                vTaskDelay(pdMS_TO_TICKS(200));
+                digitalWrite(BUZZER_PIN, LOW);
+                BLUETOOTH_SERIAL.println("[OK] Buzzer ON");
+                Serial.println("[CMD] Buzzer enabled");
+            } else {
+                digitalWrite(BUZZER_PIN, LOW);
+                BLUETOOTH_SERIAL.println("[OK] Buzzer OFF");
+                Serial.println("[CMD] Buzzer disabled");
+            }
+            break;
+            
         case 'S':
             // Status
             displayStatus();
@@ -665,6 +797,7 @@ void processBluetoothCommand(char cmd) {
             BLUETOOTH_SERIAL.println("2 = Close GATE_IN");
             BLUETOOTH_SERIAL.println("3 = Open GATE_OUT");
             BLUETOOTH_SERIAL.println("4 = Close GATE_OUT");
+            BLUETOOTH_SERIAL.println("B = Toggle Buzzer");
             BLUETOOTH_SERIAL.println("S = Status");
             BLUETOOTH_SERIAL.println("? = Help");
             BLUETOOTH_SERIAL.println("====================\n");
@@ -700,5 +833,132 @@ void displayStatus() {
     BLUETOOTH_SERIAL.print("Total operations: ");
     BLUETOOTH_SERIAL.println(total_servo_operations);
     
+    BLUETOOTH_SERIAL.print("Parking: ");
+    for (int i = 0; i < 6; i++) {
+        BLUETOOTH_SERIAL.print(parking_slots[i] ? "F" : "E");
+        BLUETOOTH_SERIAL.print(" ");
+    }
+    BLUETOOTH_SERIAL.println();
+    
+    BLUETOOTH_SERIAL.print("Smoke Sensor: ");
+    BLUETOOTH_SERIAL.print(analogRead(SMOKE_SENSOR));
+    BLUETOOTH_SERIAL.print(" | Flame: ");
+    BLUETOOTH_SERIAL.println(digitalRead(FLAME_SENSOR) ? "OK" : "ALERT");
+    
+    BLUETOOTH_SERIAL.print("Alarm: ");
+    BLUETOOTH_SERIAL.println(alarm_active ? "ACTIVE" : "NORMAL");
+    
+    BLUETOOTH_SERIAL.print("Buzzer: ");
+    BLUETOOTH_SERIAL.println(buzzer_enabled ? "ON" : "OFF");
+    
     BLUETOOTH_SERIAL.println("====================================\n");
 }
+
+// ========== TaskBuzzer ==========
+// Handles buzzer control: manual on/off and automatic alarm beeping
+void TaskBuzzer(void *pvParameters) {
+    unsigned long last_log = 0;
+    
+    Serial.println("[BUZZ] TaskBuzzer started!");
+    
+    for (;;) {
+        // If manual buzzer is ON, keep it ON
+        if (buzzer_enabled && alarm_active == 0) {
+            digitalWrite(BUZZER_PIN, HIGH);
+        }
+        // If alarm is active, beep pattern
+        else if (alarm_active) {
+            unsigned long alarm_elapsed = millis() - alarm_start;
+            // Beep pattern: 200ms on, 200ms off
+            if ((alarm_elapsed / ALARM_BEEP_INTERVAL) % 2 == 0) {
+                digitalWrite(BUZZER_PIN, HIGH);
+            } else {
+                digitalWrite(BUZZER_PIN, LOW);
+            }
+        }
+        // Otherwise buzzer is OFF
+        else {
+            digitalWrite(BUZZER_PIN, LOW);
+        }
+        
+        // Log every 10 seconds
+        if (millis() - last_log > 10000) {
+            last_log = millis();
+            Serial.print("[BUZZ] State - Manual: ");
+            Serial.print(buzzer_enabled ? "ON" : "OFF");
+            Serial.print(" | Alarm: ");
+            Serial.println(alarm_active ? "ACTIVE" : "NORMAL");
+        }
+        
+        // Update every 50ms for smooth beeping
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+// ========== TaskSlotSync ==========
+// Synchronizes parking slot status with ESP32
+void TaskSlotSync(void *pvParameters) {
+    unsigned long last_sync = 0;
+    unsigned long last_log = 0;
+    
+    Serial.println("[SYNC] TaskSlotSync started!");
+    
+    for (;;) {
+        // Check if any slot state changed
+        bool changed = false;
+        for (int i = 0; i < 6; i++) {
+            if (parking_slots[i] != last_parking_slots[i]) {
+                changed = true;
+                last_parking_slots[i] = parking_slots[i];
+            }
+        }
+        
+        // Sync every 2 seconds OR on change
+        if (changed || (millis() - last_sync > 2000)) {
+            syncParkingSlotsWithESP32();
+            last_sync = millis();
+        }
+        
+        // Log every 15 seconds
+        if (millis() - last_log > 15000) {
+            last_log = millis();
+            Serial.print("[SYNC] Parking slots: ");
+            for (int i = 0; i < 6; i++) {
+                Serial.print(parking_slots[i] ? "F" : "E");
+                Serial.print(" ");
+            }
+            Serial.println();
+        }
+        
+        // Check every 500ms
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+// =====================================================
+// HELPER FUNCTIONS
+// =====================================================
+
+void sendAlarmToESP32(const char* type, int value) {
+    char message[64];
+    // Format: $ALARM|type|value|timestamp
+    snprintf(message, sizeof(message), "$ALARM|%s|%d|%lu\n", type, value, millis());
+    ESP32_SERIAL.print(message);
+    Serial.print("[ESP32-ALARM] Sent: ");
+    Serial.println(message);
+}
+
+void syncParkingSlotsWithESP32() {
+    char message[128];
+    // Format: $SLOTS|s1,s2,s3,s4,s5,s6|timestamp
+    snprintf(message, sizeof(message), "$SLOTS|%d,%d,%d,%d,%d,%d|%lu\n", 
+        parking_slots[0], parking_slots[1], parking_slots[2], 
+        parking_slots[3], parking_slots[4], parking_slots[5], millis());
+    ESP32_SERIAL.print(message);
+    Serial.print("[ESP32-SLOTS] Sync: ");
+    Serial.println(message);
+}
+
+// =====================================================
+// END OF SMART PARKING SYSTEM - FreeRTOS VERSION
+// =====================================================

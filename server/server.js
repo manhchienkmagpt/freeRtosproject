@@ -6,32 +6,32 @@
  * Technology Stack:
  * - Runtime: Node.js
  * - Framework: Express.js
- * - Database: SQLite3
+ * - Database: MySQL 8.0
  * 
  * Port: 5000
- * Database: parking_system.db
+ * Database: parking_system (MySQL)
  * 
  * Features:
- * - Vehicle entry/exit management
+ * - Servo gate control via Bluetooth
  * - Parking slot status tracking
- * - Alarm logging
- * - Payment processing (simulation)
+ * - Alarm logging (smoke/flame detection)
  * - Real-time statistics
  */
 
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const moment = require('moment');
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
 
 // Database initialization
-const db = require('./database/db');
+const db = require('./database/db_mysql');
 
 // Route imports
 const vehicleRoutes = require('./routes/vehicleRoutes');
 const alarmRoutes = require('./routes/alarmRoutes');
+const servoRoutes = require('./routes/servoRoutes');
+const slotRoutes = require('./routes/slotRoutes');
 
 // =====================================================
 // CONSTANTS
@@ -72,53 +72,37 @@ app.get('/health', (req, res) => {
     });
 });
 
+app.use('/api/vehicle', vehicleRoutes);
+app.use('/api/alarm', alarmRoutes);
+app.use('/api/servo', servoRoutes);
+app.use('/api/slots', slotRoutes);
+
 // System status endpoint
-app.get('/api/system/status', (req, res) => {
-    db.all('SELECT COUNT(*) as total_vehicles FROM vehicles_log', (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/system/status', async (req, res) => {
+    try {
+        const vehicleCount = await db.get('SELECT COUNT(*) as total_vehicles FROM vehicles_log');
+        const slotCount = await db.get('SELECT COUNT(*) as occupied_slots FROM parking_slots WHERE is_occupied = 1');
+        const revenue = await db.get('SELECT SUM(payment_amount) as total_revenue FROM vehicles_log WHERE payment_status = "completed"');
         
-        db.all('SELECT COUNT(*) as occupied_slots FROM parking_slots WHERE is_occupied = 1', 
-            (err, slots) => {
-                if (err) {
-                    return res.status(500).json({ error: err.message });
-                }
-                
-                db.all('SELECT SUM(payment_amount) as total_revenue FROM vehicles_log WHERE payment_status = "completed"',
-                    (err, revenue) => {
-                        if (err) {
-                            return res.status(500).json({ error: err.message });
-                        }
-                        
-                        res.json({
-                            status: 'OK',
-                            timestamp: new Date(),
-                            total_vehicles_processed: rows[0].total_vehicles,
-                            occupied_slots: slots[0].occupied_slots,
-                            total_available_slots: 6,
-                            total_revenue: revenue[0].total_revenue || 0,
-                            uptime_seconds: Math.floor(process.uptime())
-                        });
-                    }
-                );
-            }
-        );
-    });
+        res.json({
+            status: 'OK',
+            timestamp: new Date(),
+            total_vehicles_processed: vehicleCount.total_vehicles || 0,
+            occupied_slots: slotCount.occupied_slots || 0,
+            total_available_slots: 6,
+            total_revenue: revenue.total_revenue || 0,
+            uptime_seconds: Math.floor(process.uptime())
+        });
+    } catch (err) {
+        console.error('[ERROR] /api/system/status:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// Vehicle management routes
-app.use('/api/vehicle', vehicleRoutes);
-
-// Alarm management routes
-app.use('/api/alarm', alarmRoutes);
-
 // Parking status endpoint
-app.get('/api/parking-status', (req, res) => {
-    db.all('SELECT * FROM parking_slots ORDER BY slot_id', (err, slots) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/parking-status', async (req, res) => {
+    try {
+        const slots = await db.all('SELECT * FROM parking_slots ORDER BY slot_id');
         
         const occupied = slots.filter(s => s.is_occupied).length;
         const available = slots.length - occupied;
@@ -131,119 +115,118 @@ app.get('/api/parking-status', (req, res) => {
             slots: slots,
             timestamp: new Date()
         });
-    });
+    } catch (err) {
+        console.error('[ERROR] /api/parking-status:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Statistics endpoints
-app.get('/api/statistics/daily', (req, res) => {
-    const today = moment().format('YYYY-MM-DD');
-    
-    const query = `
-        SELECT 
-            COUNT(*) as vehicles_count,
-            SUM(CASE WHEN payment_status = 'completed' THEN payment_amount ELSE 0 END) as revenue,
-            AVG(duration_minutes) as avg_duration_minutes,
-            MIN(entry_time) as first_entry,
-            MAX(exit_time) as last_exit
-        FROM vehicles_log
-        WHERE DATE(entry_time) = ?
-    `;
-    
-    db.get(query, [today], (err, data) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/statistics/daily', async (req, res) => {
+    try {
+        const today = moment().format('YYYY-MM-DD');
+        
+        const query = `
+            SELECT 
+                COUNT(*) as vehicles_count,
+                SUM(CASE WHEN payment_status = 'completed' THEN payment_amount ELSE 0 END) as revenue,
+                AVG(duration_minutes) as avg_duration_minutes,
+                MIN(entry_time) as first_entry,
+                MAX(exit_time) as last_exit
+            FROM vehicles_log
+            WHERE DATE(entry_time) = ?
+        `;
+        
+        const data = await db.get(query, [today]);
         
         res.json({
             date: today,
             vehicles_count: data.vehicles_count || 0,
             revenue: data.revenue || 0,
-            avg_duration_minutes: Math.round(data.avg_duration_minutes * 100) / 100,
+            avg_duration_minutes: Math.round((data.avg_duration_minutes || 0) * 100) / 100,
             first_entry: data.first_entry,
             last_exit: data.last_exit,
             timestamp: new Date()
         });
-    });
+    } catch (err) {
+        console.error('[ERROR] /api/statistics/daily:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/statistics/hourly', (req, res) => {
-    const today = moment().format('YYYY-MM-DD');
-    
-    const query = `
-        SELECT 
-            strftime('%H', entry_time) as hour,
-            COUNT(*) as vehicles_count,
-            SUM(CASE WHEN payment_status = 'completed' THEN payment_amount ELSE 0 END) as revenue
-        FROM vehicles_log
-        WHERE DATE(entry_time) = ?
-        GROUP BY hour
-        ORDER BY hour ASC
-    `;
-    
-    db.all(query, [today], (err, data) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/statistics/hourly', async (req, res) => {
+    try {
+        const today = moment().format('YYYY-MM-DD');
+        
+        const query = `
+            SELECT 
+                HOUR(entry_time) as hour,
+                COUNT(*) as vehicles_count,
+                SUM(CASE WHEN payment_status = 'completed' THEN payment_amount ELSE 0 END) as revenue
+            FROM vehicles_log
+            WHERE DATE(entry_time) = ?
+            GROUP BY HOUR(entry_time)
+            ORDER BY hour ASC
+        `;
+        
+        const data = await db.all(query, [today]);
         
         res.json({
             date: today,
             hourly_data: data || [],
             timestamp: new Date()
         });
-    });
+    } catch (err) {
+        console.error('[ERROR] /api/statistics/hourly:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Get all vehicles (with pagination)
-app.get('/api/vehicles', (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
-    
-    const countQuery = 'SELECT COUNT(*) as total FROM vehicles_log';
-    const dataQuery = `
-        SELECT * FROM vehicles_log 
-        ORDER BY entry_time DESC 
-        LIMIT ? OFFSET ?
-    `;
-    
-    db.get(countQuery, (err, countResult) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/vehicles', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const offset = (page - 1) * limit;
         
-        db.all(dataQuery, [limit, offset], (err, vehicles) => {
-            if (err) {
-                return res.status(500).json({ error: err.message });
-            }
-            
-            res.json({
-                page,
-                limit,
-                total: countResult.total,
-                total_pages: Math.ceil(countResult.total / limit),
-                vehicles,
-                timestamp: new Date()
-            });
+        const countQuery = 'SELECT COUNT(*) as total FROM vehicles_log';
+        const dataQuery = `
+            SELECT * FROM vehicles_log 
+            ORDER BY entry_time DESC 
+            LIMIT ? OFFSET ?
+        `;
+        
+        const countResult = await db.get(countQuery);
+        const vehicles = await db.all(dataQuery, [limit, offset]);
+        
+        res.json({
+            page,
+            limit,
+            total: countResult.total || 0,
+            total_pages: Math.ceil((countResult.total || 0) / limit),
+            vehicles,
+            timestamp: new Date()
         });
-    });
+    } catch (err) {
+        console.error('[ERROR] /api/vehicles:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Get alarm logs
-app.get('/api/alarms', (req, res) => {
-    const days = parseInt(req.query.days) || 7;
-    const since = moment().subtract(days, 'days').format('YYYY-MM-DD');
-    
-    const query = `
-        SELECT * FROM alarm_logs
-        WHERE DATE(alarm_time) >= ?
-        ORDER BY alarm_time DESC
-        LIMIT 100
-    `;
-    
-    db.all(query, [since], (err, alarms) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+app.get('/api/alarms', async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 7;
+        const since = moment().subtract(days, 'days').format('YYYY-MM-DD');
+        
+        const query = `
+            SELECT * FROM alarm_logs
+            WHERE DATE(alarm_time) >= ?
+            ORDER BY alarm_time DESC
+            LIMIT 100
+        `;
+        
+        const alarms = await db.all(query, [since]);
         
         res.json({
             days_back: days,
@@ -251,7 +234,10 @@ app.get('/api/alarms', (req, res) => {
             alarms,
             timestamp: new Date()
         });
-    });
+    } catch (err) {
+        console.error('[ERROR] /api/alarms:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // =====================================================

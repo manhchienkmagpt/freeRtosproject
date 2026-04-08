@@ -1,0 +1,143 @@
+.alarm-status {
+  padding: 20px;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.alarm-status.active {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+  color: white;
+  animation: pulse-alarm 2s infinite;
+}
+
+.alarm-status.safe {
+  background: linear-gradient(135deg, #51cf66 0%, #37b24d 100%);
+  color: white;
+}
+
+@keyframes pulse-alarm {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
+  }
+}
+
+.alarm-indicator {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.alarm-light {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.alarm-status.active .alarm-light.alarm-on {
+  background: rgba(255, 255, 255, 0.3);
+  border: 3px solid white;
+}
+
+.alarm-status.safe .alarm-light.alarm-off {
+  background: rgba(255, 255, 255, 0.3);
+  border: 3px solid white;
+}
+
+.alarm-text {
+  flex: 1;
+}
+
+.alarm-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 5px;
+  letter-spacing: 1px;
+}
+
+.alarm-count {
+  font-size: 14px;
+  opacity: 0.95;
+}
+
+.alarm-list {
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 15px;
+  margin-top: 15px;
+}
+
+.alarm-list h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  opacity: 0.9;
+}
+
+.alarm-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+}
+
+.alarm-item:last-child {
+  border-bottom: none;
+}
+
+.alarm-type {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.alarm-type.smoke {
+  background: rgba(107, 114, 207, 0.3);
+}
+
+.alarm-type.flame {
+  background: rgba(255, 107, 107, 0.3);
+}
+
+.alarm-value {
+  font-family: 'Courier New', monospace;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.alarm-time {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+@media (max-width: 768px) {
+  .alarm-status {
+    padding: 15px;
+  }
+
+  .alarm-indicator {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+  }
+
+  .alarm-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+}

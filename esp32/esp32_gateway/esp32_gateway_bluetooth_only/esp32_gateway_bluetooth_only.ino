@@ -71,6 +71,17 @@ typedef struct {
 } ServoEvent;
 
 typedef struct {
+    char type[12];           // "SMOKE" or "FLAME"
+    int value;
+    unsigned long timestamp;
+} AlarmEvent;
+
+typedef struct {
+    uint8_t slots[6];
+    unsigned long timestamp;
+} SlotsUpdate;
+
+typedef struct {
     bool is_connected;
     uint32_t last_sync;
     uint32_t messages_sent;
@@ -152,21 +163,28 @@ void loop() {
     // Check WiFi connection periodically
     if (millis() - last_wifi_check > 10000) {  // Every 10 seconds
         checkWiFiConnection();
+        if (gateway_status.is_connected) {
+            Serial.println("[WiFi] ✓ Connected");
+        } else {
+            Serial.println("[WiFi] ✗ Not connected - API calls will fail");
+        }
         last_wifi_check = millis();
     }
     
     // Check for incoming data from Arduino
-    while (ArduinoSerial.available()) {
+    if (ArduinoSerial.available()) {
         char c = ArduinoSerial.read();
+        Serial.print(c);  // Echo each character for debugging
         
         // Check for message start
         if (c == '$') {
             buffer_index = 0;
             uart_buffer[0] = '\0';
+            Serial.println("\n[UART] Message start detected");
         } else if (c == '\n' || c == '\r') {
             if (buffer_index > 0) {
                 uart_buffer[buffer_index] = '\0';
-                Serial.print("[UART] Received: ");
+                Serial.print("[UART] Complete message: ");
                 Serial.println(uart_buffer);
                 
                 parseUARTMessage(uart_buffer);
@@ -176,6 +194,18 @@ void loop() {
             if (buffer_index < sizeof(uart_buffer) - 1) {
                 uart_buffer[buffer_index++] = c;
             }
+        }
+    } else {
+        // No data available - print status periodically
+        static unsigned long last_status = 0;
+        if (millis() - last_status > 5000) {
+            last_status = millis();
+            Serial.print("[STATUS] Awaiting data... WiFi: ");
+            Serial.print(gateway_status.is_connected ? "✓" : "✗");
+            Serial.print(" | Messages sent: ");
+            Serial.print(gateway_status.messages_sent);
+            Serial.print(" | Failed: ");
+            Serial.println(gateway_status.messages_failed);
         }
     }
     
@@ -223,46 +253,45 @@ void setupWiFi() {
 // =====================================================
 
 void parseUARTMessage(const char* message) {
-    // Format: "GATE_IN|OPEN|90|1234567890"
+    // Phân loại message dựa trên tiền tố: $SERVO, $ALARM, $SLOTS
     
-    ServoEvent event;
-    
-    // Parse with sscanf
-    int parsed = sscanf(message, "%11[^|]|%7[^|]|%hhu|%lu",
-                       event.gate_type,
-                       event.action,
-                       &event.servo_angle,
-                       &event.timestamp);
-    
-    if (parsed == 4) {
-        Serial.print("[PARSE] Gate: ");
-        Serial.print(event.gate_type);
-        Serial.print(", Action: ");
-        Serial.print(event.action);
-        Serial.print(", Angle: ");
-        Serial.print(event.servo_angle);
-        Serial.print(", Timestamp: ");
-        Serial.println(event.timestamp);
-        
-        // Validate gate type
-        if (strcmp(event.gate_type, "GATE_IN") == 0 || 
-            strcmp(event.gate_type, "GATE_OUT") == 0) {
-            
-            // Validate action
-            if (strcmp(event.action, "OPEN") == 0 || 
-                strcmp(event.action, "CLOSE") == 0) {
-                
-                handleServoEvent(event);
-            } else {
-                Serial.println("[ERROR] Invalid action");
-            }
+    if (strncmp(message, "SERVO|", 6) == 0) {
+        ServoEvent event;
+        int parsed = sscanf(message + 6, "%11[^|]|%7[^|]|%hhu|%lu",
+                           event.gate_type, event.action, &event.servo_angle, &event.timestamp);
+        if (parsed == 4) {
+            Serial.println("[PARSE] Servo event parsed successfully");
+            handleServoEvent(event);
         } else {
-            Serial.println("[ERROR] Invalid gate type");
+            Serial.println("[PARSE ERROR] Failed to parse servo message");
         }
-    } else {
-        Serial.print("[ERROR] Parse failed. Parsed ");
-        Serial.print(parsed);
-        Serial.println(" fields");
+    } 
+    else if (strncmp(message, "ALARM|", 6) == 0) {
+        AlarmEvent alert;
+        int parsed = sscanf(message + 6, "%11[^|]|%d|%lu",
+                           alert.type, &alert.value, &alert.timestamp);
+        if (parsed == 3) {
+            Serial.println("[PARSE] Alarm event parsed successfully");
+            handleAlarmEvent(alert);
+        } else {
+            Serial.println("[PARSE ERROR] Failed to parse alarm message");
+        }
+    }
+    else if (strncmp(message, "SLOTS|", 6) == 0) {
+        SlotsUpdate update;
+        int parsed = sscanf(message + 6, "%hhu,%hhu,%hhu,%hhu,%hhu,%hhu|%lu",
+                           &update.slots[0], &update.slots[1], &update.slots[2],
+                           &update.slots[3], &update.slots[4], &update.slots[5], &update.timestamp);
+        if (parsed == 7) {
+            Serial.println("[PARSE] Slots update parsed successfully");
+            handleSlotsUpdate(update);
+        } else {
+            Serial.println("[PARSE ERROR] Failed to parse slots message");
+        }
+    }
+    else {
+        Serial.print("[PARSE ERROR] Unknown message type: ");
+        Serial.println(message);
     }
 }
 
@@ -271,19 +300,49 @@ void parseUARTMessage(const char* message) {
 // =====================================================
 
 void handleServoEvent(ServoEvent event) {
-    Serial.println("[EVENT] Processing servo event...");
+    Serial.print("[EVENT] Processing servo event: ");
+    Serial.print(event.gate_type);
+    Serial.print(" ");
+    Serial.println(event.action);
     
-    // Use current server time if Arduino timestamp is too old
-    unsigned long server_timestamp = millis() / 1000;
-    
-    // Send to server
-    if (sendToServer(event)) {
+    if (sendServoToServer(event)) {
         gateway_status.messages_sent++;
-        Serial.println("[SUCCESS] Servo event sent to server");
+        Serial.println("[EVENT] ✓ Servo event sent successfully");
         blinkLED(1);
     } else {
         gateway_status.messages_failed++;
-        Serial.println("[FAILED] Could not send servo event to server");
+        Serial.println("[EVENT] ✗ Failed to send servo event");
+    }
+}
+
+void handleAlarmEvent(AlarmEvent alert) {
+    Serial.print("[EVENT] Processing alarm event: ");
+    Serial.println(alert.type);
+    
+    if (sendAlarmToServer(alert)) {
+        gateway_status.messages_sent++;
+        Serial.println("[EVENT] ✓ Alarm event sent successfully");
+        blinkLED(2); // Blink twice for alarm
+    } else {
+        gateway_status.messages_failed++;
+        Serial.println("[EVENT] ✗ Failed to send alarm event");
+    }
+}
+
+void handleSlotsUpdate(SlotsUpdate update) {
+    Serial.print("[EVENT] Processing slots update: [");
+    for(int i=0; i<6; i++) {
+        Serial.print(update.slots[i]);
+        if(i<5) Serial.print(",");
+    }
+    Serial.println("]");
+    
+    if (sendSlotsToServer(update)) {
+        gateway_status.messages_sent++;
+        Serial.println("[EVENT] ✓ Slots update sent successfully");
+    } else {
+        gateway_status.messages_failed++;
+        Serial.println("[EVENT] ✗ Failed to send slots update");
     }
 }
 
@@ -291,61 +350,126 @@ void handleServoEvent(ServoEvent event) {
 // SERVER COMMUNICATION
 // =====================================================
 
-bool sendToServer(ServoEvent event) {
+bool sendServoToServer(ServoEvent event) {
     if (!gateway_status.is_connected) {
-        Serial.println("[ERROR] WiFi not connected");
+        Serial.println("[SERVO] ✗ WiFi not connected - cannot send to server");
         return false;
     }
     
-    // Determine endpoint based on action
-    char endpoint[64];
-    if (strcmp(event.action, "OPEN") == 0) {
-        strcpy(endpoint, "/api/servo/open");
-    } else {
-        strcpy(endpoint, "/api/servo/close");
-    }
-    
-    // Build full URL
     char full_url[128];
-    snprintf(full_url, sizeof(full_url), "%s%s", SERVER_URL, endpoint);
+    snprintf(full_url, sizeof(full_url), "%s/api/servo/%s", SERVER_URL, 
+             (strcmp(event.action, "OPEN") == 0 ? "open" : "close"));
     
-    Serial.print("[HTTP] Connecting to: ");
+    Serial.print("[SERVO] Sending to: ");
     Serial.println(full_url);
     
     HTTPClient http;
     http.begin(full_url);
     http.addHeader("Content-Type", "application/json");
     
-    // Build JSON payload
     StaticJsonDocument<JSON_BUFFER_SIZE> doc;
     doc["gate_type"] = event.gate_type;
     doc["servo_angle"] = event.servo_angle;
-    doc["timestamp"] = millis() / 1000;  // Current server time
+    doc["timestamp"] = event.timestamp;
     
     String json_payload;
     serializeJson(doc, json_payload);
     
-    Serial.print("[JSON] Payload: ");
+    Serial.print("[SERVO] Payload: ");
     Serial.println(json_payload);
     
-    // Send POST request
     int http_code = http.POST(json_payload);
     
-    String response = http.getString();
+    Serial.print("[SERVO] Response code: ");
+    Serial.println(http_code);
     
     http.end();
     
-    Serial.print("[HTTP] Response code: ");
-    Serial.println(http_code);
-    Serial.print("[HTTP] Response: ");
-    Serial.println(response);
+    bool success = (http_code == 200 || http_code == 201);
+    Serial.print("[SERVO] Result: ");
+    Serial.println(success ? "✓ SUCCESS" : "✗ FAILED");
     
-    // Check if request was successful
-    if (http_code == 201 || http_code == 200) {
-        return true;
-    } else {
+    return success;
+}
+
+bool sendAlarmToServer(AlarmEvent alert) {
+    if (!gateway_status.is_connected) {
+        Serial.println("[ALARM] ✗ WiFi not connected - cannot send to server");
         return false;
     }
+    
+    String url = String(SERVER_URL) + "/api/alarm/log";
+    Serial.print("[ALARM] Sending to: ");
+    Serial.println(url);
+    
+    HTTPClient http;
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    
+    StaticJsonDocument<JSON_BUFFER_SIZE> doc;
+    doc["alarm_type"] = alert.type;
+    doc["sensor_value"] = alert.value;
+    doc["timestamp"] = alert.timestamp;
+    
+    String json_payload;
+    serializeJson(doc, json_payload);
+    
+    Serial.print("[ALARM] Payload: ");
+    Serial.println(json_payload);
+    
+    int http_code = http.POST(json_payload);
+    
+    Serial.print("[ALARM] Response code: ");
+    Serial.println(http_code);
+    
+    http.end();
+    
+    bool success = (http_code == 200 || http_code == 201);
+    Serial.print("[ALARM] Result: ");
+    Serial.println(success ? "✓ SUCCESS" : "✗ FAILED");
+    
+    return success;
+}
+
+bool sendSlotsToServer(SlotsUpdate update) {
+    if (!gateway_status.is_connected) {
+        Serial.println("[SLOTS] ✗ WiFi not connected - cannot send to server");
+        return false;
+    }
+    
+    String url = String(SERVER_URL) + "/api/slots/update";
+    Serial.print("[SLOTS] Sending to: ");
+    Serial.println(url);
+    
+    HTTPClient http;
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+    
+    StaticJsonDocument<512> doc;
+    JsonArray slots = doc.createNestedArray("parking_slots");
+    for(int i=0; i<6; i++) {
+        slots.add(update.slots[i]);
+    }
+    doc["timestamp"] = update.timestamp;
+    
+    String json_payload;
+    serializeJson(doc, json_payload);
+    
+    Serial.print("[SLOTS] Payload: ");
+    Serial.println(json_payload);
+    
+    int http_code = http.POST(json_payload);
+    
+    Serial.print("[SLOTS] Response code: ");
+    Serial.println(http_code);
+    
+    http.end();
+    
+    bool success = (http_code == 200 || http_code == 201);
+    Serial.print("[SLOTS] Result: ");
+    Serial.println(success ? "✓ SUCCESS" : "✗ FAILED");
+    
+    return success;
 }
 
 // =====================================================
