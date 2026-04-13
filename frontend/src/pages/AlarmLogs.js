@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import io from 'socket.io-client';
 import './AlarmLogs.css';
 
 const API_BASE_URL = 'http://localhost:5000/api';
+const SOCKET_URL = 'http://localhost:5000';
 const ITEMS_PER_PAGE = 10;
 
 function AlarmLogs() {
@@ -11,9 +13,45 @@ function AlarmLogs() {
   const [error, setError] = useState(null);
   const [filterType, setFilterType] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => {
     fetchAlarmLogs();
+  }, []);
+
+  // Setup WebSocket for real-time alarm updates
+  useEffect(() => {
+    const newSocket = io(SOCKET_URL, {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5
+    });
+
+    newSocket.on('alarmTriggered', (alarmData) => {
+      console.log('🚨 Real-time alarm triggered:', alarmData);
+      
+      // Add new alarm to the top of the list
+      const newAlarm = {
+        alarm_id: alarmData.alarm_id,
+        alarm_type: alarmData.alarm_type,
+        sensor_value: alarmData.sensor_value,
+        severity: alarmData.alarm_type === 'FLAME' ? 'CRITICAL' : 'HIGH',
+        alarm_time: alarmData.alarm_time,
+        resolved: alarmData.resolved ? 1 : 0,
+        resolved_time: null
+      };
+      
+      setLogs(prevLogs => [newAlarm, ...prevLogs]);
+      // Reset to page 1 to show newest alarm
+      setCurrentPage(1);
+    });
+
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.close();
+    };
   }, []);
 
   const fetchAlarmLogs = async () => {
@@ -50,6 +88,13 @@ function AlarmLogs() {
     if (pageNum >= 1 && pageNum <= totalPages) {
       setCurrentPage(pageNum);
     }
+  };
+
+  // Visual indicator for new entries
+  const isNewEntry = (alarmTime) => {
+    const entryTime = new Date(alarmTime).getTime();
+    const now = Date.now();
+    return (now - entryTime) < 5000; // Highlight entries from last 5 seconds
   };
 
   const stats = {
@@ -104,7 +149,6 @@ function AlarmLogs() {
             <option value="flame">Flame</option>
           </select>
         </div>
-        <button className="refresh-btn" onClick={fetchAlarmLogs}>🔄 Refresh</button>
       </div>
 
       {/* Logs Table */}
@@ -126,7 +170,7 @@ function AlarmLogs() {
               </thead>
               <tbody>
                 {paginatedLogs.map((log, index) => (
-                  <tr key={index} className={index % 2 === 0 ? 'even' : 'odd'}>
+                  <tr key={index} className={`${index % 2 === 0 ? 'even' : 'odd'} ${isNewEntry(log.alarm_time) ? 'new-entry' : ''}`}>
                     <td>
                       <span className={`type-badge ${log.alarm_type.toLowerCase()}`}>
                         {log.alarm_type}

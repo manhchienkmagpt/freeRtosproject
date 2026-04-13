@@ -53,6 +53,33 @@ router.post('/open', async (req, res) => {
         
         console.log(`[SERVO] Open event recorded - ID: ${event_id}, Gate: ${gate_type}`);
         
+        // Broadcast real-time update via WebSocket
+        if (req.app.locals.io) {
+            const allServos = await db.all('SELECT * FROM servo_status ORDER BY gate_id', []);
+            const status_data = {};
+            allServos.forEach(servo => {
+                status_data[servo.gate_type] = {
+                    gate_id: servo.gate_id,
+                    gate_type: servo.gate_type,
+                    current_position: servo.current_position,
+                    is_open: servo.is_open === 1,
+                    last_action: servo.last_action,
+                    last_action_time: servo.last_action_time,
+                    total_operations: servo.total_operations,
+                    updated_at: servo.updated_at
+                };
+            });
+            
+            req.app.locals.io.emit('gateStatusUpdate', {
+                timestamp: new Date(),
+                gates: status_data,
+                changed_gate: gate_type,
+                action: action
+            });
+            
+            console.log(`[WS] Broadcasting gate status update - Gate: ${gate_type}`);
+        }
+        
         res.status(201).json({
             event_id,
             gate_type,
@@ -106,6 +133,33 @@ router.post('/close', async (req, res) => {
         );
         
         console.log(`[SERVO] Close event recorded - ID: ${event_id}, Gate: ${gate_type}`);
+        
+        // Broadcast real-time update via WebSocket
+        if (req.app.locals.io) {
+            const allServos = await db.all('SELECT * FROM servo_status ORDER BY gate_id', []);
+            const status_data = {};
+            allServos.forEach(servo => {
+                status_data[servo.gate_type] = {
+                    gate_id: servo.gate_id,
+                    gate_type: servo.gate_type,
+                    current_position: servo.current_position,
+                    is_open: servo.is_open === 1,
+                    last_action: servo.last_action,
+                    last_action_time: servo.last_action_time,
+                    total_operations: servo.total_operations,
+                    updated_at: servo.updated_at
+                };
+            });
+            
+            req.app.locals.io.emit('gateStatusUpdate', {
+                timestamp: new Date(),
+                gates: status_data,
+                changed_gate: gate_type,
+                action: action
+            });
+            
+            console.log(`[WS] Broadcasting gate status update - Gate: ${gate_type}`);
+        }
         
         res.status(201).json({
             event_id,

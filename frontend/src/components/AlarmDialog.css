@@ -1,0 +1,185 @@
+.alarm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.alarm-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.alarm-dialog {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  max-width: 500px;
+  width: 90%;
+  overflow: hidden;
+  animation: slideIn 0.3s ease;
+  border-left: 6px solid;
+}
+
+.alarm-dialog.flame {
+  border-left-color: #ff4444;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffe6e6 100%);
+}
+
+.alarm-dialog.smoke {
+  border-left-color: #ff9900;
+  background: linear-gradient(135deg, #fff9f0 0%, #ffe6cc 100%);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.alarm-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  border-bottom: 2px solid rgba(255, 68, 68, 0.2);
+  position: relative;
+}
+
+.alarm-dialog.flame .alarm-header {
+  border-bottom-color: rgba(255, 68, 68, 0.2);
+  background: linear-gradient(135deg, rgba(255, 68, 68, 0.1), rgba(255, 102, 102, 0.1));
+}
+
+.alarm-dialog.smoke .alarm-header {
+  border-bottom-color: rgba(255, 153, 0, 0.2);
+  background: linear-gradient(135deg, rgba(255, 153, 0, 0.1), rgba(255, 180, 0, 0.1));
+}
+
+.alarm-icon {
+  font-size: 40px;
+  animation: pulse 1s infinite;
+}
+
+.alarm-header h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 24px;
+  font-weight: 700;
+  color: #333;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 32px;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.alarm-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.alarm-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+}
+
+.alarm-detail .label {
+  font-weight: 600;
+  color: #666;
+  font-size: 14px;
+}
+
+.alarm-detail .value {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+.alarm-detail .value.status {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.alarm-detail .value.status.active {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.alarm-detail .value.status.resolved {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.alarm-footer {
+  padding: 20px 24px;
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  gap: 12px;
+}
+
+.btn-close {
+  flex: 1;
+  padding: 12px 24px;
+  background: #ff4444;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close:hover {
+  background: #dd3333;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 68, 68, 0.3);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}

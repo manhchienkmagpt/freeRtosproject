@@ -20,9 +20,11 @@
 
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const moment = require('moment');
+const socketIo = require('socket.io');
 
 // Database initialization
 const db = require('./database/db_mysql');
@@ -47,6 +49,21 @@ const GRACE_PERIOD = 5 * 60000;  // 5 minute grace period in ms
 // =====================================================
 
 const app = express();
+
+// =====================================================
+// SOCKET.IO SETUP
+// =====================================================
+
+const httpServer = http.createServer(app);
+const io = socketIo(httpServer, {
+    cors: {
+        origin: process.env.CORS_ORIGIN || '*',
+        methods: ['GET', 'POST']
+    }
+});
+
+// Make io available to routes
+app.locals.io = io;
 
 // Middleware
 app.use(cors());
@@ -256,12 +273,25 @@ app.use((err, req, res, next) => {
 });
 
 // =====================================================
+// WEBSOCKET HANDLERS
+// =====================================================
+
+io.on('connection', (socket) => {
+    console.log(`[WS] Client connected: ${socket.id}`);
+    
+    socket.on('disconnect', () => {
+        console.log(`[WS] Client disconnected: ${socket.id}`);
+    });
+});
+
+// =====================================================
 // SERVER STARTUP
 // =====================================================
 
-app.listen(PORT, HOST, () => {
+httpServer.listen(PORT, HOST, () => {
     console.log('\n=== SMART PARKING SYSTEM - BACKEND SERVER ===\n');
     console.log(`[SERVER] Listening on ${HOST}:${PORT}`);
+    console.log(`[SERVER] WebSocket enabled via Socket.IO`);
     console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`[DATABASE] Connected to: parking_system.db`);
     console.log(`[TIME] Started at: ${moment().format('YYYY-MM-DD HH:mm:ss')} \n`);
@@ -270,11 +300,13 @@ app.listen(PORT, HOST, () => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('\n[SERVER] Shutting down gracefully...');
-    db.close((err) => {
-        if (err) {
-            console.error('[ERROR]', err.message);
-        }
-        process.exit(0);
+    httpServer.close(() => {
+        db.close((err) => {
+            if (err) {
+                console.error('[ERROR]', err.message);
+            }
+            process.exit(0);
+        });
     });
 });
 

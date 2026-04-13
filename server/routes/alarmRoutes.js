@@ -16,14 +16,18 @@ router.post('/log', async (req, res) => {
     try {
         const { alarm_type, sensor_value, timestamp } = req.body;
         
-        console.log(`[ALARM] Alert received - Type: ${alarm_type}, Value: ${sensor_value}`);
+        console.log(`[ALARM] Alert received - Type: ${alarm_type}, Value: ${sensor_value}, Timestamp: ${timestamp}`);
         
         if (!alarm_type) {
             return res.status(400).json({ error: 'Alarm type is required' });
         }
         
         const alarm_id = uuidv4();
-        const alarm_time = timestamp ? new Date(timestamp) : new Date();
+        // Check if timestamp is Arduino millis() (< 1 billion) vs actual Unix timestamp
+        // Arduino sends millis() which results in 1970 dates, so use server time instead
+        const alarm_time = (timestamp && timestamp > 1000000000) 
+            ? new Date(timestamp) 
+            : new Date();
         
         // Insert alarm log
         await db.insert(
@@ -32,6 +36,20 @@ router.post('/log', async (req, res) => {
              VALUES (?, ?, ?, ?, 0)`,
             [alarm_id, alarm_type, sensor_value || 0, alarm_time]
         );
+        
+        // Broadcast real-time alarm alert via WebSocket
+        if (req.app.locals.io) {
+            req.app.locals.io.emit('alarmTriggered', {
+                alarm_id,
+                alarm_type,
+                sensor_value: sensor_value || 0,
+                alarm_time,
+                resolved: false,
+                timestamp: new Date()
+            });
+            
+            console.log(`[WS] Broadcasting alarm alert - Type: ${alarm_type}, ID: ${alarm_id}`);
+        }
         
         res.status(201).json({
             alarm_id,

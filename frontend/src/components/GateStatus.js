@@ -58,8 +58,8 @@ function GateStatus({ data }) {
           <div className="detail-row">
             <span className="label">Last Updated:</span>
             <span className="value">
-              {gate.last_action_time 
-                ? new Date(gate.last_action_time).toLocaleString()
+              {gate.updated_at 
+                ? new Date(gate.updated_at).toLocaleString()
                 : 'Never'}
             </span>
           </div>
