@@ -36,7 +36,7 @@ function ParkingSlots({ data }) {
           >
             <div className="slot-number">{slot.slot_id}</div>
             <div className="slot-status">
-              {slot.is_occupied ? '🚗 Occupied' : '✓ Empty'}
+              {slot.is_occupied ? 'Occupied' : 'Empty'}
             </div>
             <div className="slot-time">
               {slot.updated_at ? new Date(slot.updated_at).toLocaleTimeString() : 'N/A'}

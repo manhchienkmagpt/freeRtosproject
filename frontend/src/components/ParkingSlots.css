@@ -101,30 +101,38 @@
 
 .occupancy-bar {
   margin-top: 20px;
+  padding: 20px;
+  background: rgba(10, 14, 39, 0.8);
+  border-radius: 10px;
+  border: 2px solid #00FFD1;
+  box-shadow: 0 0 20px rgba(0, 255, 209, 0.3), inset 0 0 20px rgba(0, 255, 209, 0.1);
 }
 
 .bar-background {
   width: 100%;
   height: 30px;
-  background: #e9e9e9;
+  background: rgba(0, 255, 209, 0.1);
   border-radius: 15px;
   overflow: hidden;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: 1px solid #00FFD1;
+  box-shadow: inset 0 0 10px rgba(0, 255, 209, 0.2);
 }
 
 .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #06B6D4 0%, #0891B2 100%);
+  background: linear-gradient(90deg, #00FFD1 0%, #00B8A0 100%);
   transition: width 0.3s ease;
   border-radius: 15px;
+  box-shadow: 0 0 15px rgba(0, 255, 209, 0.8);
 }
 
 .bar-label {
   display: block;
-  margin-top: 10px;
+  margin-top: 15px;
   text-align: center;
   font-weight: 600;
-  color: #333;
+  color: #00FFD1;
+  text-shadow: 0 0 10px rgba(0, 255, 209, 0.5);
 }
 
 .no-data {

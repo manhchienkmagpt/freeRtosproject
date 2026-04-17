@@ -40,7 +40,7 @@ function GateStatus({ data }) {
         <div className="gate-header">
           <h3>{label}</h3>
           <div className={`gate-indicator ${gate.is_open ? 'open' : 'closed'}`}>
-            {gate.is_open ? '🔓 OPEN' : '🔒 CLOSED'}
+            {gate.is_open ? 'OPEN' : 'CLOSED'}
           </div>
         </div>
 
@@ -93,8 +93,8 @@ function GateStatus({ data }) {
 
   return (
     <div className="gate-status">
-      <GateCard gate={gateIn} label="🚪 Cổng Vào (Gate IN)" />
-      <GateCard gate={gateOut} label="🚪 Cổng Ra (Gate OUT)" />
+      <GateCard gate={gateIn} label="Cổng Vào (Gate IN)" />
+      <GateCard gate={gateOut} label="Cổng Ra (Gate OUT)" />
     </div>
   );
 }
