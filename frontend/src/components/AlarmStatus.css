@@ -2,25 +2,29 @@
   padding: 20px;
   border-radius: 10px;
   transition: all 0.3s ease;
+  background: rgba(10, 14, 39, 0.8);
+  border: 2px solid;
 }
 
 .alarm-status.active {
-  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
-  color: white;
+  color: #FF6C00;
+  border-color: #FF6C00;
   animation: pulse-alarm 2s infinite;
+  box-shadow: 0 0 20px rgba(255, 108, 0, 0.4), inset 0 0 20px rgba(255, 108, 0, 0.1);
 }
 
 .alarm-status.safe {
-  background: linear-gradient(135deg, #51cf66 0%, #37b24d 100%);
-  color: white;
+  color: #00FFD1;
+  border-color: #00FFD1;
+  box-shadow: 0 0 20px rgba(0, 255, 209, 0.4), inset 0 0 20px rgba(0, 255, 209, 0.1);
 }
 
 @keyframes pulse-alarm {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+    box-shadow: 0 0 0 0 rgba(255, 108, 0, 0.7), inset 0 0 20px rgba(255, 108, 0, 0.1);
   }
   50% {
-    box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
+    box-shadow: 0 0 0 15px rgba(255, 108, 0, 0), inset 0 0 20px rgba(255, 108, 0, 0.1);
   }
 }
 
@@ -43,13 +47,15 @@
 }
 
 .alarm-status.active .alarm-light.alarm-on {
-  background: rgba(255, 255, 255, 0.3);
-  border: 3px solid white;
+  background: rgba(255, 108, 0, 0.3);
+  border: 3px solid #FF6C00;
+  box-shadow: 0 0 20px rgba(255, 108, 0, 0.6);
 }
 
 .alarm-status.safe .alarm-light.alarm-off {
-  background: rgba(255, 255, 255, 0.3);
-  border: 3px solid white;
+  background: rgba(0, 255, 209, 0.3);
+  border: 3px solid #00FFD1;
+  box-shadow: 0 0 20px rgba(0, 255, 209, 0.6);
 }
 
 .alarm-text {
@@ -69,7 +75,7 @@
 }
 
 .alarm-list {
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  border-top: 1px solid rgba(0, 255, 209, 0.2);
   padding-top: 15px;
   margin-top: 15px;
 }
@@ -88,7 +94,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(0, 255, 209, 0.1);
   font-size: 12px;
 }
 
